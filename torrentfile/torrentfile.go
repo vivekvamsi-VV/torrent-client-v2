@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/jackpal/bencode-go"
+	"github.com/veggiedefender/torrent-client/fileinfo"
 	"github.com/veggiedefender/torrent-client/p2p"
 )
 
@@ -22,13 +23,15 @@ type TorrentFile struct {
 	PieceLength int
 	Length      int
 	Name        string
+	Files       []fileinfo.FileInfo
 }
 
 type bencodeInfo struct {
-	Pieces      string `bencode:"pieces"`
-	PieceLength int    `bencode:"piece length"`
-	Length      int    `bencode:"length"`
-	Name        string `bencode:"name"`
+	Pieces      string              `bencode:"pieces"`
+	PieceLength int                 `bencode:"piece length"`
+	Length      int                 `bencode:"length"`
+	Name        string              `bencode:"name"`
+	Files       []fileinfo.FileInfo `bencode:"files"`
 }
 
 type bencodeTorrent struct {
@@ -63,14 +66,27 @@ func (t *TorrentFile) DownloadToFile(path string) error {
 		return err
 	}
 
-	outFile, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer outFile.Close()
-	_, err = outFile.Write(buf)
-	if err != nil {
-		return err
+	// outFile, err := os.Create(path)
+	// if err != nil {
+	// 	return err
+	// }
+	// defer outFile.Close()
+	// _, err = outFile.Write(buf)
+	// if err != nil {
+	// 	return err
+	// }
+	// return nil
+
+	return t.createFiles(path, buf)
+}
+
+func (t *TorrentFile) createFiles(path string, buf []byte) error {
+	fmt.Println("Saving files...")
+	for _, file := range t.Files {
+		err := file.WriteToDisk(buf, t.Files, path, t.Name)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -117,6 +133,37 @@ func (i *bencodeInfo) splitPieceHashes() ([][20]byte, error) {
 	return hashes, nil
 }
 
+func (i *bencodeInfo) setTotalLength() int {
+	var length int
+
+	if len(i.Files) != 0 && i.Length == 0 {
+
+		for _, file := range i.Files {
+			length += file.Length
+		}
+
+	} else {
+		length = i.Length
+	}
+
+	return length
+}
+
+func (i *bencodeInfo) setFileInfos() []fileinfo.FileInfo {
+	if len(i.Files) != 0 && i.Length == 0 {
+		return i.Files
+	}
+
+	singleFile := fileinfo.FileInfo{
+		Length: i.Length,
+		Path:   []string{i.Name},
+	}
+
+	return []fileinfo.FileInfo{
+		singleFile,
+	}
+}
+
 func (bto *bencodeTorrent) toTorrentFile() (TorrentFile, error) {
 	infoHash, err := bto.Info.hash()
 	if err != nil {
@@ -131,7 +178,8 @@ func (bto *bencodeTorrent) toTorrentFile() (TorrentFile, error) {
 		InfoHash:    infoHash,
 		PieceHashes: pieceHashes,
 		PieceLength: bto.Info.PieceLength,
-		Length:      bto.Info.Length,
+		Length:      bto.Info.setTotalLength(),
+		Files:       bto.Info.setFileInfos(),
 		Name:        bto.Info.Name,
 	}
 	return t, nil
